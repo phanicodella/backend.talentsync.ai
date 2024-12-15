@@ -1,0 +1,37 @@
+E:\tanentsync\talentSync\backend
+├── .env
+├── gen.py
+├── logs
+│   ├── combined.log
+│   └── error.log
+├── package-lock.json
+├── package.json
+├── src
+│   ├── config
+│   │   ├── config.js
+│   │   ├── daily.js
+│   │   ├── db.js
+│   │   └── openai.js
+│   ├── controllers
+│   │   └── interviewController.js
+│   ├── middleware
+│   │   ├── auth.js
+│   │   ├── errorHandler.js
+│   │   └── validation.js
+│   ├── models
+│   │   ├── interview.js
+│   │   └── user.js
+│   ├── routes
+│   │   ├── authRoutes.js
+│   │   └── interviewRoutes.js
+│   ├── seeder.js
+│   ├── server.js
+│   ├── services
+│   │   ├── dailyService.js
+│   │   ├── emailService.js
+│   │   ├── openaiService.js
+│   │   └── pdfService.js
+│   └── utils
+│       └── logger.js
+├── tree.txt
+└── yarn.lock
