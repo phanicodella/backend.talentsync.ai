@@ -1,25 +1,24 @@
+// backend/src/routes/interviewRoutes.js
 const express = require('express');
 const router = express.Router();
 const interviewController = require('../controllers/interviewController');
-const { validateInterview, validateAnswer, validateObjectId } = require('../middleware/validation');
-const { auth } = require('../middleware/auth');
 
-// Create new interview session
-router.post('/create', auth, validateInterview, interviewController.createInterview);
+// Create new interview
+router.post('/interviews/create', interviewController.createInterview);
 
-// Process interview answers
-router.post('/answer', auth, validateAnswer, interviewController.submitAnswer);
-
-// End interview and generate feedback
-router.post('/:id/end', auth, validateObjectId, interviewController.endInterview);
+// Submit answer for an interview
+router.post('/interviews/answer', interviewController.submitAnswer);
 
 // Get interview details
-router.get('/:id', auth, validateObjectId, interviewController.getInterview);
+router.get('/interviews/:id', interviewController.getInterview);
 
-// Export interview results as PDF (Placeholder)
-router.post('/:id/export-pdf', auth, validateObjectId, interviewController.exportPDF);
+// End an interview
+router.post('/interviews/:id/end', interviewController.endInterview);
 
-// Share interview results (Placeholder)
-router.post('/:id/share', auth, validateObjectId, interviewController.shareResults);
+// Export interview as PDF
+router.post('/interviews/:id/export-pdf', interviewController.exportPDF);
+
+// Share interview results
+router.post('/interviews/:id/share', interviewController.shareResults);
 
 module.exports = router;

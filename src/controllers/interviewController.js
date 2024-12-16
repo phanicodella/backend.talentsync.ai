@@ -1,32 +1,72 @@
+// backend/src/controllers/interviewController.js
 const Interview = require('../models/interview');
-const openai = require('../config/openai');
 const daily = require('../config/daily');
+const openai = require('../config/openai');
 
 const interviewController = {
     createInterview: async (req, res) => {
         try {
             const { name, email } = req.body;
-
+    
+            console.log('Interview Creation Request:', { name, email });
+    
             if (!name || !email) {
                 return res.status(400).json({
                     success: false,
                     error: 'Name and email are required',
                 });
             }
-
-            const room = await daily.createRoom();
-            const interview = new Interview({
-                candidate: email,
-                roomUrl: room.url,
-                status: 'scheduled',
-                startTime: new Date(),
-                candidateName: name,
-            });
-
-            await interview.save();
-            res.status(201).json({ success: true, data: interview });
+    
+            try {
+                // Create Daily.co room
+                const room = await daily.createDailyRoom(name, email);
+                console.log('Daily.co Room Created:', room);
+    
+                // Prepare interview document
+                const interview = new Interview({
+                    candidate: email,
+                    roomUrl: room.url,
+                    status: 'scheduled',
+                    startTime: new Date(),
+                    candidateName: name,
+                });
+    
+                console.log('Preparing to save interview:', interview.toObject());
+    
+                // Save with explicit options and timing
+                const saveStart = Date.now();
+                
+                // Use .save() with additional error handling
+                await interview.save();
+                
+                const saveEnd = Date.now();
+                console.log(`Interview saved successfully in ${saveEnd - saveStart}ms`);
+    
+                res.status(201).json({ 
+                    success: true, 
+                    data: interview.toObject() 
+                });
+            } catch (saveError) {
+                console.error('Interview Save Error:', {
+                    name: saveError.name,
+                    message: saveError.message,
+                    stack: saveError.stack
+                });
+    
+                return res.status(500).json({
+                    success: false,
+                    error: 'Failed to save interview',
+                    details: saveError.message,
+                    errorName: saveError.name
+                });
+            }
         } catch (error) {
-            console.error('Error creating interview:', error);
+            console.error('Interview Creation Error:', {
+                name: error.name,
+                message: error.message,
+                stack: error.stack
+            });
+    
             res.status(500).json({
                 success: false,
                 error: 'Failed to create interview session',
@@ -35,64 +75,56 @@ const interviewController = {
         }
     },
 
-    getInterview: async (req, res) => {
-        try {
-            const interview = await Interview.findById(req.params.id);
-            if (!interview) {
-                return res.status(404).json({
-                    success: false,
-                    error: 'Interview not found',
-                });
-            }
-            res.json({ success: true, data: interview });
-        } catch (error) {
-            console.error('Error fetching interview:', error);
-            res.status(500).json({
-                success: false,
-                error: 'Failed to retrieve interview',
-                details: error.message,
-            });
-        }
-    },
-
     submitAnswer: async (req, res) => {
         try {
             const { interviewId, question, answer } = req.body;
-
-            if (!interviewId || !question || !answer) {
-                return res.status(400).json({
-                    success: false,
-                    error: 'Missing required fields',
-                });
-            }
-
-            const analysis = await openai.chat.completions.create({
-                model: "gpt-3.5-turbo",
-                messages: [
-                    { role: "system", content: "Analyze the interview response." },
-                    { role: "user", content: `Question: ${question}\nAnswer: ${answer}` },
-                ],
-            });
-
+    
             const interview = await Interview.findById(interviewId);
             if (!interview) {
                 return res.status(404).json({ success: false, error: 'Interview not found' });
             }
-
-            interview.answers.push({
-                question,
-                answer,
-                analysis: analysis.choices[0].message.content,
+    
+            interview.answers.push({ 
+                question, 
+                answer 
             });
-
-            await interview.save();
-            res.json({ success: true, data: interview });
+    
+            const savedInterview = await interview.save();
+            console.log('Saved Interview with Answer:', savedInterview);
+    
+            res.json({ 
+                success: true, 
+                data: savedInterview 
+            });
         } catch (error) {
-            console.error('Error submitting answer:', error);
-            res.status(500).json({
-                success: false,
-                error: 'Failed to process answer',
-                details: error.message,
+            console.error('Answer submission error:', error);
+            res.status(500).json({ 
+                success: false, 
+                error: error.message 
+            });
+        }
+    },
+
+    getInterview: async (req, res) => {
+        try {
+            const interview = await Interview.findById(req.params.id)
+                .populate('answers'); // Ensure answers are populated
+    
+            if (!interview) {
+                return res.status(404).json({ 
+                    success: false, 
+                    error: 'Interview not found' 
+                });
+            }
+    
+            res.json({ 
+                success: true, 
+                data: interview 
+            });
+        } catch (error) {
+            res.status(500).json({ 
+                success: false, 
+                error: error.message 
             });
         }
     },
@@ -103,60 +135,51 @@ const interviewController = {
             if (!interview) {
                 return res.status(404).json({
                     success: false,
-                    error: 'Interview not found',
+                    error: 'Interview not found'
                 });
             }
 
             interview.status = 'completed';
             interview.endTime = new Date();
-
-            const feedback = await openai.chat.completions.create({
-                model: "gpt-3.5-turbo",
-                messages: [
-                    { role: "system", content: "Provide interview feedback." },
-                    { role: "user", content: JSON.stringify(interview.answers) },
-                ],
-            });
-
-            interview.feedback = feedback.choices[0].message.content;
-
             await interview.save();
+
             res.json({ success: true, data: interview });
         } catch (error) {
             console.error('Error ending interview:', error);
             res.status(500).json({
                 success: false,
-                error: 'Failed to end interview',
-                details: error.message,
+                error: 'Failed to end interview'
             });
         }
     },
 
     exportPDF: async (req, res) => {
         try {
-            res.status(200).json({ success: true, message: 'Export PDF feature coming soon.' });
+            res.status(200).json({
+                success: true,
+                message: 'PDF export feature coming soon'
+            });
         } catch (error) {
-            console.error('Error exporting PDF:', error);
             res.status(500).json({
                 success: false,
-                error: 'Failed to export PDF',
-                details: error.message,
+                error: 'Failed to export PDF'
             });
         }
     },
 
     shareResults: async (req, res) => {
         try {
-            res.status(200).json({ success: true, message: 'Share results feature coming soon.' });
+            res.status(200).json({
+                success: true,
+                message: 'Share results feature coming soon'
+            });
         } catch (error) {
-            console.error('Error sharing results:', error);
             res.status(500).json({
                 success: false,
-                error: 'Failed to share results',
-                details: error.message,
+                error: 'Failed to share results'
             });
         }
-    },
+    }
 };
 
 module.exports = interviewController;
