@@ -1,185 +1,153 @@
 // backend/src/controllers/interviewController.js
 const Interview = require('../models/interview');
-const daily = require('../config/daily');
-const openai = require('../config/openai');
+const dailyService = require('../services/dailyService');
+const logger = require('../utils/logger');
+const { AppError } = require('../middleware/errorHandler');
 
-const interviewController = {
-    createInterview: async (req, res) => {
-        try {
-            const { name, email } = req.body;
-    
-            console.log('Interview Creation Request:', { name, email });
-    
-            if (!name || !email) {
-                return res.status(400).json({
-                    success: false,
-                    error: 'Name and email are required',
-                });
+exports.createInterview = async (req, res, next) => {
+    try {
+        const { name, email } = req.body;
+
+        logger.info('Creating interview for:', { name, email });
+
+        if (!name || !email) {
+            throw new AppError('Name and email are required', 400);
+        }
+
+        // Create interview record
+        const interview = new Interview({
+            candidate: email,
+            candidateName: name,
+            status: 'scheduled',
+            startTime: new Date(),
+            metrics: {
+                questionsAnswered: 0,
+                totalQuestions: 0,
+                averageScore: 0
+            },
+            videoSession: {
+                connectionStatus: 'pending',
+                participantCount: 0
             }
-    
-            try {
-                // Create Daily.co room
-                const room = await daily.createDailyRoom(name, email);
-                console.log('Daily.co Room Created:', room);
-    
-                // Prepare interview document
-                const interview = new Interview({
-                    candidate: email,
-                    roomUrl: room.url,
-                    status: 'scheduled',
-                    startTime: new Date(),
-                    candidateName: name,
-                });
-    
-                console.log('Preparing to save interview:', interview.toObject());
-    
-                // Save with explicit options and timing
-                const saveStart = Date.now();
-                
-                // Use .save() with additional error handling
-                await interview.save();
-                
-                const saveEnd = Date.now();
-                console.log(`Interview saved successfully in ${saveEnd - saveStart}ms`);
-    
-                res.status(201).json({ 
-                    success: true, 
-                    data: interview.toObject() 
-                });
-            } catch (saveError) {
-                console.error('Interview Save Error:', {
-                    name: saveError.name,
-                    message: saveError.message,
-                    stack: saveError.stack
-                });
-    
-                return res.status(500).json({
-                    success: false,
-                    error: 'Failed to save interview',
-                    details: saveError.message,
-                    errorName: saveError.name
-                });
+        });
+
+        // Create Daily.co room
+        try {
+            logger.info('Creating Daily.co room');
+            const videoRoom = await dailyService.createRoom(interview._id.toString());
+            
+            interview.videoSession = {
+                ...interview.videoSession,
+                roomUrl: videoRoom.url,
+                roomName: videoRoom.name,
+                token: videoRoom.token
+            };
+
+            logger.info('Daily.co room created:', videoRoom.name);
+        } catch (error) {
+            logger.error('Failed to create Daily.co room:', error);
+            throw new AppError('Failed to create video room: ' + error.message, 500);
+        }
+
+        // Save interview with video room details
+        const savedInterview = await interview.save();
+        logger.info('Interview saved successfully:', savedInterview._id);
+
+        res.status(201).json({
+            success: true,
+            data: {
+                _id: savedInterview._id,
+                roomUrl: savedInterview.videoSession.roomUrl,
+                token: savedInterview.videoSession.token
             }
-        } catch (error) {
-            console.error('Interview Creation Error:', {
-                name: error.name,
-                message: error.message,
-                stack: error.stack
-            });
-    
-            res.status(500).json({
-                success: false,
-                error: 'Failed to create interview session',
-                details: error.message,
-            });
-        }
-    },
-
-    submitAnswer: async (req, res) => {
-        try {
-            const { interviewId, question, answer } = req.body;
-    
-            const interview = await Interview.findById(interviewId);
-            if (!interview) {
-                return res.status(404).json({ success: false, error: 'Interview not found' });
-            }
-    
-            interview.answers.push({ 
-                question, 
-                answer 
-            });
-    
-            const savedInterview = await interview.save();
-            console.log('Saved Interview with Answer:', savedInterview);
-    
-            res.json({ 
-                success: true, 
-                data: savedInterview 
-            });
-        } catch (error) {
-            console.error('Answer submission error:', error);
-            res.status(500).json({ 
-                success: false, 
-                error: error.message 
-            });
-        }
-    },
-
-    getInterview: async (req, res) => {
-        try {
-            const interview = await Interview.findById(req.params.id)
-                .populate('answers'); // Ensure answers are populated
-    
-            if (!interview) {
-                return res.status(404).json({ 
-                    success: false, 
-                    error: 'Interview not found' 
-                });
-            }
-    
-            res.json({ 
-                success: true, 
-                data: interview 
-            });
-        } catch (error) {
-            res.status(500).json({ 
-                success: false, 
-                error: error.message 
-            });
-        }
-    },
-
-    endInterview: async (req, res) => {
-        try {
-            const interview = await Interview.findById(req.params.id);
-            if (!interview) {
-                return res.status(404).json({
-                    success: false,
-                    error: 'Interview not found'
-                });
-            }
-
-            interview.status = 'completed';
-            interview.endTime = new Date();
-            await interview.save();
-
-            res.json({ success: true, data: interview });
-        } catch (error) {
-            console.error('Error ending interview:', error);
-            res.status(500).json({
-                success: false,
-                error: 'Failed to end interview'
-            });
-        }
-    },
-
-    exportPDF: async (req, res) => {
-        try {
-            res.status(200).json({
-                success: true,
-                message: 'PDF export feature coming soon'
-            });
-        } catch (error) {
-            res.status(500).json({
-                success: false,
-                error: 'Failed to export PDF'
-            });
-        }
-    },
-
-    shareResults: async (req, res) => {
-        try {
-            res.status(200).json({
-                success: true,
-                message: 'Share results feature coming soon'
-            });
-        } catch (error) {
-            res.status(500).json({
-                success: false,
-                error: 'Failed to share results'
-            });
-        }
+        });
+    } catch (error) {
+        logger.error('Interview creation failed:', error);
+        next(error);
     }
 };
 
-module.exports = interviewController;
+exports.getInterview = async (req, res, next) => {
+    try {
+        const interview = await Interview.findById(req.params.id);
+        if (!interview) {
+            throw new AppError('Interview not found', 404);
+        }
+        
+        res.json({
+            success: true,
+            data: interview
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+exports.submitAnswer = async (req, res, next) => {
+    try {
+        const { interviewId, question, answer } = req.body;
+
+        const interview = await Interview.findById(interviewId);
+        if (!interview) {
+            throw new AppError('Interview not found', 404);
+        }
+
+        const answerEntry = {
+            question,
+            answer,
+            timestamp: new Date()
+        };
+
+        interview.answers.push(answerEntry);
+        interview.status = 'in_progress';
+        
+        // Update metrics
+        interview.metrics = {
+            questionsAnswered: interview.answers.length,
+            totalQuestions: interview.answers.length,
+            lastUpdated: new Date()
+        };
+
+        const savedInterview = await interview.save();
+        
+        res.json({
+            success: true,
+            data: {
+                answer: answerEntry,
+                metrics: interview.metrics
+            }
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+exports.endInterview = async (req, res, next) => {
+    try {
+        const interview = await Interview.findById(req.params.id);
+        if (!interview) {
+            throw new AppError('Interview not found', 404);
+        }
+
+        // Clean up Daily.co room
+        if (interview.videoSession?.roomName) {
+            await dailyService.deleteRoom(interview.videoSession.roomName);
+        }
+
+        interview.status = 'completed';
+        interview.endTime = new Date();
+        
+        const savedInterview = await interview.save();
+
+        res.json({
+            success: true,
+            data: {
+                id: savedInterview._id,
+                status: savedInterview.status,
+                metrics: savedInterview.metrics
+            }
+        });
+    } catch (error) {
+        next(error);
+    }
+};

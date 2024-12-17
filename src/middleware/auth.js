@@ -1,7 +1,17 @@
-// backend/src/middleware/auth.js
 const jwt = require('jsonwebtoken');
+const rateLimit = require('express-rate-limit');
 const { AppError } = require('./errorHandler');
+const User = require('../models/user');
 const logger = require('../utils/logger');
+
+// Rate limiter configuration
+const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // limit each IP to 100 requests per windowMs
+    message: 'Too many requests from this IP, please try again later',
+    standardHeaders: true,
+    legacyHeaders: false
+});
 
 const auth = async (req, res, next) => {
     try {
@@ -15,39 +25,36 @@ const auth = async (req, res, next) => {
         
         try {
             const decoded = jwt.verify(token, process.env.JWT_SECRET);
-            req.user = {
-                id: decoded.id,
-                email: decoded.email,
-                role: decoded.role
-            };
+            
+            // Check if token is temporary (for candidates)
+            if (decoded.temporary) {
+                req.user = decoded;
+                return next();
+            }
+
+            // For regular tokens, verify user still exists and is active
+            const user = await User.findById(decoded.id).select('-password');
+            if (!user || !user.active) {
+                throw new AppError('User not found or inactive', 401);
+            }
+
+            req.user = user;
             next();
         } catch (error) {
-            logger.error('Token verification failed:', error);
-            throw new AppError('Invalid authentication token', 401);
+            if (error.name === 'TokenExpiredError') {
+                throw new AppError('Token expired', 401);
+            }
+            if (error.name === 'JsonWebTokenError') {
+                throw new AppError('Invalid token', 401);
+            }
+            throw error;
         }
     } catch (error) {
         next(error);
     }
 };
 
-const checkRole = (...roles) => {
-    return (req, res, next) => {
-        if (!req.user || !roles.includes(req.user.role)) {
-            throw new AppError('Not authorized to access this route', 403);
-        }
-        next();
-    };
+module.exports = { 
+    auth, 
+    apiLimiter 
 };
-
-const rateLimiter = {
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100,
-    message: 'Too many requests from this IP, please try again later',
-    standardHeaders: true,
-    legacyHeaders: false,
-    handler: (req, res) => {
-        throw new AppError('Rate limit exceeded', 429);
-    }
-};
-
-module.exports = { auth, checkRole, rateLimiter };

@@ -1,5 +1,22 @@
 const mongoose = require('mongoose');
 
+const AnalysisSchema = new mongoose.Schema({
+    scores: {
+        technical: Number,
+        clarity: Number,
+        problemSolving: Number
+    },
+    strengths: [String],
+    improvements: [String],
+    feedback: String,
+    overallScore: Number,
+    processingStatus: {
+        type: String,
+        enum: ['pending', 'completed', 'failed'],
+        default: 'pending'
+    }
+});
+
 const AnswerSchema = new mongoose.Schema({
     question: { 
         type: String, 
@@ -13,49 +30,130 @@ const AnswerSchema = new mongoose.Schema({
         type: Date, 
         default: Date.now 
     },
-    analysis: {
-        sentiment: String,
-        relevance: Number,
-        confidence: Number
+    duration: Number,
+    analysis: AnalysisSchema,
+    videoQualityMetrics: {
+        faceDetectionScore: Number,
+        audioQuality: Number,
+        networkQuality: Number
     }
+});
+
+const MetricsSchema = new mongoose.Schema({
+    questionsAnswered: {
+        type: Number,
+        default: 0
+    },
+    totalQuestions: {
+        type: Number,
+        default: 0
+    },
+    averageScore: {
+        type: Number,
+        default: 0
+    },
+    duration: Number,
+    overallScore: Number,
+    lastUpdated: Date,
+    completedAt: Date
 });
 
 const InterviewSchema = new mongoose.Schema({
     candidate: { 
         type: String, 
-        required: true 
+        required: true,
+        index: true
     },
     candidateName: { 
         type: String, 
         required: true 
     },
-    roomUrl: { 
-        type: String, 
-        required: true 
-    },
     status: { 
         type: String, 
-        enum: ['scheduled', 'in-progress', 'completed', 'cancelled'], 
-        default: 'scheduled' 
+        enum: ['scheduled', 'in_progress', 'completed', 'cancelled'],
+        default: 'scheduled',
+        index: true
     },
     startTime: { 
         type: Date, 
-        default: Date.now 
+        default: Date.now,
+        index: true
     },
+    endTime: Date,
     answers: [AnswerSchema],
-    endTime: Date
+    metrics: MetricsSchema,
+    finalAnalysis: {
+        overallScore: Number,
+        strengths: [String],
+        improvements: [String],
+        technicalAssessment: String,
+        communicationAssessment: String,
+        recommendations: [String]
+    },
+    videoSession: {
+        roomUrl: String,
+        roomName: String,
+        token: String,
+        participantCount: {
+            type: Number,
+            default: 0
+        },
+        connectionStatus: {
+            type: String,
+            enum: ['pending', 'connected', 'disconnected', 'failed'],
+            default: 'pending'
+        }
+    },
+    settings: {
+        maxQuestions: {
+            type: Number,
+            default: 5
+        },
+        timePerQuestion: {
+            type: Number,
+            default: 180
+        },
+        languagePreference: {
+            type: String,
+            default: 'en'
+        }
+    }
 }, { 
-    timestamps: true 
+    timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true }
 });
 
-// Add a virtual to calculate interview duration
+// Indexes for performance
+InterviewSchema.index({ createdAt: 1 });
+InterviewSchema.index({ 'answers.timestamp': 1 });
+
+// Virtual for calculating interview duration
 InterviewSchema.virtual('duration').get(function() {
-    return this.endTime ? 
-        (this.endTime.getTime() - this.startTime.getTime()) / 1000 : 
-        null;
+    if (!this.endTime) return null;
+    return Math.round((this.endTime - this.startTime) / 1000);
 });
 
-// Ensure virtual fields are included when converted to JSON
-InterviewSchema.set('toJSON', { virtuals: true });
+// Pre-save middleware to update metrics
+InterviewSchema.pre('save', function(next) {
+    if (this.isModified('answers')) {
+        this.metrics = this.metrics || {};
+        this.metrics.questionsAnswered = this.answers.length;
+        this.metrics.lastUpdated = new Date();
+        
+        if (this.answers.length > 0) {
+            const scores = this.answers
+                .filter(a => a.analysis && a.analysis.overallScore)
+                .map(a => a.analysis.overallScore);
+                
+            this.metrics.averageScore = scores.length > 0
+                ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+                : 0;
+        }
+    }
+    next();
+});
 
-module.exports = mongoose.model('Interview', InterviewSchema);
+const Interview = mongoose.model('Interview', InterviewSchema);
+
+module.exports = Interview;

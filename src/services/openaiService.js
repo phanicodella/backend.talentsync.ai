@@ -1,114 +1,233 @@
 // backend/src/services/openaiService.js
 const OpenAI = require('openai');
-const config = require('../config/config');
 const logger = require('../utils/logger');
 
 class OpenAIService {
     constructor() {
         this.openai = new OpenAI({
-            apiKey: config.openai.apiKey
+            apiKey: process.env.OPENAI_API_KEY
         });
+
         this.maxRetries = 3;
-        this.retryDelay = 1000; // 1 second
+        this.retryDelay = 1000;
+
+        this.basePrompt = `You are an expert technical interviewer analyzing candidate responses.
+Focus on:
+1. Technical accuracy and depth
+2. Problem-solving approach
+3. Communication clarity
+4. Best practices understanding
+Provide structured analysis with specific scores and detailed feedback.`;
     }
 
     async analyzeAnswer(question, answer) {
-        let retries = 0;
-        
-        while (retries < this.maxRetries) {
+        let attempts = 0;
+        while (attempts < this.maxRetries) {
             try {
-                const analysis = await this.openai.chat.completions.create({
-                    model: config.openai.model,
+                const prompt = `
+Question: "${question}"
+Answer: "${answer}"
+
+Provide analysis with:
+1. Technical accuracy score (0-10)
+2. Communication clarity score (0-10)
+3. Problem-solving score (0-10)
+4. Three main strengths
+5. Three areas for improvement
+6. Overall impression
+`;
+
+                const completion = await this.openai.chat.completions.create({
+                    model: "gpt-4",
                     messages: [
-                        {
-                            role: "system",
-                            content: config.openai.systemPrompt
+                        { 
+                            role: "system", 
+                            content: this.basePrompt 
                         },
-                        {
-                            role: "user",
-                            content: `Question: ${question}\nAnswer: ${answer}`
+                        { 
+                            role: "user", 
+                            content: prompt 
                         }
                     ],
-                    temperature: config.openai.temperature,
-                    max_tokens: config.openai.maxTokens
+                    temperature: 0.7,
+                    max_tokens: 1000
                 });
 
+                const analysis = this._parseAnalysis(completion.choices[0].message.content);
+                logger.info('Answer analysis completed successfully');
+                
                 return {
-                    clarity: this.normalizeScore(7, 2),    // Fallback scores if AI fails
-                    relevance: this.normalizeScore(7, 2),
-                    confidence: this.normalizeScore(7, 2),
-                    aiAnalysis: analysis.choices[0].message.content
+                    scores: analysis.scores,
+                    strengths: analysis.strengths,
+                    improvements: analysis.improvements,
+                    feedback: analysis.feedback,
+                    overallScore: this._calculateOverallScore(analysis.scores)
                 };
             } catch (error) {
-                retries++;
-                logger.error(`OpenAI API error (attempt ${retries}/${this.maxRetries}):`, error);
-
-                if (retries === this.maxRetries || !this.isRetryableError(error)) {
-                    return {
-                        clarity: this.normalizeScore(7, 2),
-                        relevance: this.normalizeScore(7, 2),
-                        confidence: this.normalizeScore(7, 2),
-                        aiAnalysis: "Analysis not available at the moment."
-                    };
+                attempts++;
+                logger.error(`OpenAI analysis attempt ${attempts} failed:`, error);
+                
+                if (attempts === this.maxRetries) {
+                    logger.error('All OpenAI analysis attempts failed');
+                    return this._getFallbackAnalysis();
                 }
-
-                await this.sleep(this.retryDelay * retries);
+                
+                await this._sleep(this.retryDelay * attempts);
             }
         }
     }
 
-    async generateFeedback(answers) {
+    async generateFinalReport(interview) {
         try {
-            const feedback = await this.openai.chat.completions.create({
-                model: config.openai.model,
+            const answersPrompt = interview.answers
+                .map((a, i) => `Q${i + 1}: ${a.question}\nA: ${a.answer}`)
+                .join('\n\n');
+
+            const prompt = `
+Analyze this complete interview:
+
+${answersPrompt}
+
+Provide:
+1. Overall performance score (0-100)
+2. Top 3 strengths
+3. Top 3 areas for improvement
+4. Technical skill assessment
+5. Communication skill assessment
+6. Final recommendations
+`;
+
+            const completion = await this.openai.chat.completions.create({
+                model: "gpt-4",
                 messages: [
                     {
                         role: "system",
-                        content: "Generate comprehensive interview feedback with strengths and areas for improvement."
+                        content: this.basePrompt
                     },
                     {
                         role: "user",
-                        content: JSON.stringify(answers)
+                        content: prompt
                     }
                 ],
-                temperature: config.openai.temperature,
-                max_tokens: config.openai.maxTokens
+                temperature: 0.7,
+                max_tokens: 2000
             });
 
-            return {
-                overallScore: 7.5,
-                strengths: [
-                    'Clear communication skills',
-                    'Good examples provided',
-                    'Structured responses'
-                ],
-                improvements: [
-                    'Could provide more specific details',
-                    'Consider adding more context',
-                    'Elaborate on technical aspects'
-                ],
-                aiAnalysis: feedback.choices[0].message.content
-            };
+            return this._parseFinalReport(completion.choices[0].message.content);
         } catch (error) {
-            logger.error('OpenAI feedback generation error:', error);
-            return {
-                overallScore: 7.5,
-                strengths: ['Good communication', 'Clear examples'],
-                improvements: ['Provide more detail', 'Structure responses better'],
-                aiAnalysis: "Detailed feedback not available at the moment."
-            };
+            logger.error('Final report generation failed:', error);
+            return this._getFallbackReport();
         }
     }
 
-    normalizeScore(baseScore, variance) {
-        return Math.min(10, Math.max(1, baseScore + (Math.random() * variance * 2 - variance)));
+    _parseAnalysis(content) {
+        try {
+            const scores = {};
+            const scoreRegex = /(\w+)\s*(?:accuracy|clarity|solving)?\s*score:\s*(\d+)/gi;
+            let match;
+            
+            while ((match = scoreRegex.exec(content)) !== null) {
+                const category = match[1].toLowerCase();
+                scores[category] = parseInt(match[2]);
+            }
+
+            const strengths = this._extractListItems(content, 'strengths');
+            const improvements = this._extractListItems(content, 'improvements');
+
+            return {
+                scores: {
+                    technical: scores.technical || 7,
+                    clarity: scores.clarity || 7,
+                    problemSolving: scores.solving || 7
+                },
+                strengths: strengths.length ? strengths : ["Shows basic understanding"],
+                improvements: improvements.length ? improvements : ["Could provide more detail"],
+                feedback: content
+            };
+        } catch (error) {
+            logger.error('Analysis parsing failed:', error);
+            return this._getFallbackAnalysis();
+        }
     }
 
-    isRetryableError(error) {
-        return error.status === 429 || error.status >= 500;
+    _parseFinalReport(content) {
+        try {
+            const overallScoreMatch = content.match(/overall.*?(\d{1,3})/i);
+            const overallScore = overallScoreMatch ? parseInt(overallScoreMatch[1]) : 70;
+
+            return {
+                overallScore,
+                strengths: this._extractListItems(content, 'strengths'),
+                improvements: this._extractListItems(content, 'improvements'),
+                technicalAssessment: this._extractSection(content, 'technical skill assessment'),
+                communicationAssessment: this._extractSection(content, 'communication skill assessment'),
+                recommendations: this._extractListItems(content, 'recommendations')
+            };
+        } catch (error) {
+            logger.error('Final report parsing failed:', error);
+            return this._getFallbackReport();
+        }
     }
 
-    sleep(ms) {
+    _extractListItems(content, section) {
+        const sectionRegex = new RegExp(`${section}s?:([\\s\\S]*?)(?=\\n\\n|$)`, 'i');
+        const match = content.match(sectionRegex);
+        
+        if (!match) return ["Not available"];
+        
+        return match[1]
+            .split('\n')
+            .map(item => item.replace(/^[•\-\d.]\s*/, '').trim())
+            .filter(item => item.length > 0)
+            .slice(0, 3);
+    }
+
+    _extractSection(content, section) {
+        const sectionRegex = new RegExp(`${section}:([\\s\\S]*?)(?=\\n\\n|$)`, 'i');
+        const match = content.match(sectionRegex);
+        return match ? match[1].trim() : "Assessment not available";
+    }
+
+    _calculateOverallScore(scores) {
+        const weights = {
+            technical: 0.4,
+            clarity: 0.3,
+            problemSolving: 0.3
+        };
+
+        return Math.round(
+            Object.entries(scores).reduce((sum, [key, value]) => {
+                return sum + (value * (weights[key] || 0));
+            }, 0) * 10
+        );
+    }
+
+    _getFallbackAnalysis() {
+        return {
+            scores: {
+                technical: 7,
+                clarity: 7,
+                problemSolving: 7
+            },
+            strengths: ["Response provided"],
+            improvements: ["Could be more detailed"],
+            feedback: "Analysis temporarily unavailable",
+            overallScore: 70
+        };
+    }
+
+    _getFallbackReport() {
+        return {
+            overallScore: 70,
+            strengths: ["Completed the interview process"],
+            improvements: ["Technical depth could be improved"],
+            technicalAssessment: "Assessment temporarily unavailable",
+            communicationAssessment: "Assessment temporarily unavailable",
+            recommendations: ["Continue developing relevant skills"]
+        };
+    }
+
+    async _sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 }

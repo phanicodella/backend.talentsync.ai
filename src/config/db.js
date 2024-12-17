@@ -12,9 +12,8 @@ const connectDB = async () => {
             socketTimeoutMS: 60000,
             maxPoolSize: 10,
             retryWrites: true,
-            w: 'majority',
-            useNewUrlParser: true,
-            useUnifiedTopology: true
+            w: 'majority'
+            // Removed useNewUrlParser and useUnifiedTopology as they're no longer needed
         });
 
         console.log(`MongoDB Connected: ${conn.connection.host}`);

@@ -1,62 +1,72 @@
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
-const User = require('./models/user'); // Adjust the path if necessary
+const User = require('./models/user');
+const bcrypt = require('bcryptjs');
 
-dotenv.config(); // Load environment variables
+dotenv.config();
 
-// Connect to MongoDB
 const connectDB = async () => {
     try {
-        await mongoose.connect(process.env.MONGODB_URI, {
-            useNewUrlParser: true,
-            useUnifiedTopology: true,
-        });
-        console.log('MongoDB Connected!');
+        const conn = await mongoose.connect(process.env.MONGODB_URI);
+        console.log(`MongoDB Connected: ${conn.connection.host}`);
     } catch (error) {
         console.error('Error connecting to MongoDB:', error.message);
         process.exit(1);
     }
 };
 
-// Seed sample users
-const seedUsers = async () => {
-    const users = [
-        {
-            email: 'testuser@example.com',
-            name: 'Test User',
-            role: 'candidate',
-        },
-        {
-            email: 'admin@example.com',
-            name: 'Admin User',
-            role: 'admin',
-        },
-        {
-            email: 'interviewer@example.com',
-            name: 'Interviewer User',
-            role: 'interviewer',
-        },
-    ];
+// Default password for test users
+const defaultPassword = 'Test@123';
 
+const users = [
+    {
+        email: 'candidate@talentsync.ai',
+        name: 'Test Candidate',
+        password: defaultPassword,
+        role: 'candidate',
+        authType: 'local'
+    },
+    {
+        email: 'admin@talentsync.ai',
+        name: 'Admin User',
+        password: defaultPassword,
+        role: 'admin',
+        authType: 'local'
+    },
+    {
+        email: 'interviewer@talentsync.ai',
+        name: 'Test Interviewer',
+        password: defaultPassword,
+        role: 'interviewer',
+        authType: 'local'
+    }
+];
+
+const seedDatabase = async () => {
     try {
-        // Clear existing data
-        await User.deleteMany();
-        console.log('Existing users cleared.');
+        await connectDB();
+        console.log('Connected to MongoDB...');
 
-        // Insert sample data
-        await User.insertMany(users);
-        console.log('Sample users added:', users);
-        process.exit(0); // Exit script after seeding
+        // Clear existing users
+        await User.deleteMany({});
+        console.log('Cleared existing users');
+
+        // Hash password and create users
+        const hashedUsers = await Promise.all(users.map(async user => ({
+            ...user,
+            password: await bcrypt.hash(user.password, 12)
+        })));
+
+        // Insert new users
+        const createdUsers = await User.insertMany(hashedUsers);
+        console.log('Sample users created:', createdUsers);
+
+        console.log('Seeding completed successfully');
+        process.exit(0);
     } catch (error) {
-        console.error('Error seeding users:', error.message);
+        console.error('Error seeding database:', error);
         process.exit(1);
     }
-};
-
-// Run the script
-const seedDatabase = async () => {
-    await connectDB();
-    await seedUsers();
 };
 
 seedDatabase();

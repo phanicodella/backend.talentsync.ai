@@ -1,41 +1,90 @@
 const axios = require('axios');
-const config = require('./config');
+const logger = require('../utils/logger');
 
-const daily = {
-    baseURL: 'https://api.daily.co/v1',
-    
-    async createDailyRoom(candidateName, candidateEmail) {
+class DailyService {
+    constructor() {
+        this.baseURL = 'https://api.daily.co/v1';
+        this.apiKey = process.env.DAILY_API_KEY;
+        
+        if (!this.apiKey) {
+            logger.error('DAILY_API_KEY not configured');
+            throw new Error('DAILY_API_KEY must be configured');
+        }
+    }
+
+    async createRoom(options) {
         try {
             const response = await axios.post(
-                `${this.baseURL}/rooms`, 
-                {
-                    name: `interview-${Date.now()}`,
-                    privacy: 'private',
-                    properties: {
-                        enable_chat: false,
-                        start_audio_off: true,
-                        start_video_off: false,
-                        enable_screenshare: false,
-                        max_participants: 2,
-                        exp: Math.floor(Date.now() / 1000) + 7200 // 2 hours expiry
-                    }
-                },
+                `${this.baseURL}/rooms`,
+                options,
                 {
                     headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${process.env.DAILY_API_KEY}`
+                        'Authorization': `Bearer ${this.apiKey}`,
+                        'Content-Type': 'application/json'
                     }
                 }
             );
-        
             return response.data;
         } catch (error) {
-            console.error('Daily.co room creation error:', 
-                error.response ? error.response.data : error.message
-            );
-            throw new Error(`Failed to create Daily.co room: ${error.message}`);
+            logger.error('Daily.co room creation failed:', error.response?.data || error.message);
+            throw error;
         }
     }
-};
 
-module.exports = daily;
+    async deleteRoom(roomName) {
+        try {
+            const response = await axios.delete(
+                `${this.baseURL}/rooms/${roomName}`,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${this.apiKey}`,
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+            return response.data;
+        } catch (error) {
+            logger.error('Daily.co room deletion failed:', error.response?.data || error.message);
+            throw error;
+        }
+    }
+
+    async createMeetingToken(options) {
+        try {
+            const response = await axios.post(
+                `${this.baseURL}/meeting-tokens`,
+                options,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${this.apiKey}`,
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+            return response.data.token;
+        } catch (error) {
+            logger.error('Daily.co token creation failed:', error.response?.data || error.message);
+            throw error;
+        }
+    }
+
+    async getRoom(roomName) {
+        try {
+            const response = await axios.get(
+                `${this.baseURL}/rooms/${roomName}`,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${this.apiKey}`,
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+            return response.data;
+        } catch (error) {
+            logger.error('Daily.co room fetch failed:', error.response?.data || error.message);
+            throw error;
+        }
+    }
+}
+
+module.exports = new DailyService();

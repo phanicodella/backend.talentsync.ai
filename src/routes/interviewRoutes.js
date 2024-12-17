@@ -1,24 +1,39 @@
 // backend/src/routes/interviewRoutes.js
 const express = require('express');
 const router = express.Router();
+const { auth } = require('../middleware/auth');
+const { validateInterview, validateAnswer } = require('../middleware/validation');
 const interviewController = require('../controllers/interviewController');
 
-// Create new interview
-router.post('/interviews/create', interviewController.createInterview);
+// Apply authentication middleware to all routes
+router.use(auth);
 
-// Submit answer for an interview
-router.post('/interviews/answer', interviewController.submitAnswer);
+// Create Interview
+router.post('/create', validateInterview, interviewController.createInterview);
 
-// Get interview details
-router.get('/interviews/:id', interviewController.getInterview);
+// Submit Answer
+router.post('/answer', validateAnswer, interviewController.submitAnswer);
 
-// End an interview
-router.post('/interviews/:id/end', interviewController.endInterview);
+// End Interview
+router.post('/:id/end', interviewController.endInterview);
 
-// Export interview as PDF
-router.post('/interviews/:id/export-pdf', interviewController.exportPDF);
-
-// Share interview results
-router.post('/interviews/:id/share', interviewController.shareResults);
+// Get Interview
+router.get('/:id', async (req, res, next) => {
+    try {
+        const interview = await Interview.findById(req.params.id);
+        if (!interview) {
+            return res.status(404).json({
+                success: false,
+                message: 'Interview not found'
+            });
+        }
+        res.json({
+            success: true,
+            data: interview
+        });
+    } catch (error) {
+        next(error);
+    }
+});
 
 module.exports = router;
